@@ -130,6 +130,7 @@ def main():
                     if '\033[K' in prompt_str:
                         prompt_str = prompt_str[:prompt_str.rindex('\x1b[K')]
                     lines.append(input(prompt_str))
+                    print('\r\033[1A\033[K', end='', flush=True)
             except EOFError:
                 lines.append(None)
         import threading
@@ -140,7 +141,7 @@ def main():
             if lines:
                 cur_line = lines.pop(0)
                 if cur_line is None:
-                    print('\ncaught EOF, quitting', file=sys.stderr)
+                    print('\ncaught EOF, quitting')
                     break
                 mav_serialport.write(cur_line+'\n')
             while True:
@@ -161,7 +162,7 @@ def main():
                     text = text.replace('\n', ' ')
                     text = f'[{mavlink_severity_names[m.severity]:>10s}] {text}'
                     #print(f'\033[2K\r{text}', file=sys.stderr)
-                    print(f'\033\067\n\033[1A\r\033[1L{text}\033\070', end='', file=sys.stderr, flush=True)
+                    print(f'\033\067\n\033[1A\r\033[1L{text}\033\070', end='', flush=True)
 
             # handle heartbeat sending
             heartbeat_time = time.time()
