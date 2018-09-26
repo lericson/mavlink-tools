@@ -38,19 +38,17 @@ class MavlinkSerialPort():
 
     def write(self, b):
         '''write some bytes'''
-        while len(b) > 0:
-            n = len(b)
-            if n > 70:
-                n = 70
-            buf = [ord(x) for x in b[:n]]
-            buf.extend([0]*(70-len(buf)))
+        while b:
+            n = min(70, len(b))
+            chunk = bytearray(b'\0'*70)
+            chunk[:n], b = b[:n], b[n:]
             self.mav.mav.serial_control_send(self.port,
                                              mavutil.mavlink.SERIAL_CONTROL_FLAG_EXCLUSIVE |
                                              mavutil.mavlink.SERIAL_CONTROL_FLAG_RESPOND,
                                              0,
                                              0,
                                              n,
-                                             buf)
+                                             chunk)
             b = b[n:]
 
     def close(self):
@@ -112,7 +110,7 @@ def main():
     print("Connecting to MAVLINK...")
     mav_serialport = MavlinkSerialPort(args.port, args.baudrate, devnum=10)
 
-    mav_serialport.write('\n')  # make sure the shell is started
+    mav_serialport.write(b'\n')  # make sure the shell is started
 
     try:
         next_heartbeat_time = time.time()
@@ -124,12 +122,12 @@ def main():
             try:
                 while True:
                     prompt_str = str(prompt[1:], encoding='ascii')
-                    # PX4 prints VT102 Erase In Line, hack it out. Otherwise
+                    # Nsh prints VT102 Erase In Line, hack it out. Otherwise
                     # the Python line editing stuff miscalculates the length of
                     # the prompt.
                     if '\033[K' in prompt_str:
                         prompt_str = prompt_str[:prompt_str.rindex('\x1b[K')]
-                    lines.append(input(prompt_str))
+                    lines.append(bytes(input(prompt_str), 'ascii'))
                     print('\r\033[1A\033[K', end='', flush=True)
             except EOFError:
                 lines.append(None)
@@ -143,7 +141,7 @@ def main():
                 if cur_line is None:
                     print('\ncaught EOF, quitting')
                     break
-                mav_serialport.write(cur_line+'\n')
+                mav_serialport.write(cur_line+b'\n')
             while True:
                 m = mav_serialport.mav.recv_match(type=['SERIAL_CONTROL', 'STATUSTEXT'],
                                                   blocking=True, timeout=0.1)

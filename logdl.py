@@ -1,35 +1,14 @@
 import sys
 import time
-from os import path
+from os import path, unlink
 from argparse import ArgumentParser
 
 from pymavlink import mavutil
 
-#FTP_HEADER = '=HBBBBBxI'
-#'seq_number session opcode size req_opcode burst_complete offset'
-#
-#(OP_NONE, OP_TERMINATE_SESSION, OP_RESET_SESSION, OP_LIST_DIRECTORY,
-# OP_OPEN_FILE_RO, OP_READ_FILE, OP_CREATE_FILE, OP_WRITE_FILE, OP_REMOVE_FILE,
-# OP_CREATE_DIRECTORY, OP_OPEN_FILE_WO, OP_TRUNCATE_FILE, OP_RENAME,
-# OP_CALC_FILE_CRC32, OP_BURST_READ_FILE) = range(15)
-#OP_ACK, OP_Nack = 128, 129
-#
-#seq_number = 0
-#session = 0
-#seq_number += 1
-#opcode = OP_OPEN_FILE_RO
-#filepath = b'/bootlog.txt'
-#size = len(filepath)
-#req_opcode = 0
-#burst_complete = False
-#padding = 0
-#offset = 0
-#
-#ftp_payload = struct.pack(FTP_HEADER, seq_number, session, opcode, size, req_opcode, burst_complete, offset) + filepath
-
 parser = ArgumentParser()
 parser.add_argument('device')
 parser.add_argument('--baud', type=int, default=115200)
+parser.add_argument('--output-dir', '-o', default='.')
 parser.add_argument('--update', '-u', action='store_true', help='download '
                     'already-existing files again')
 
@@ -59,7 +38,8 @@ while True:
 info(f'\033[2K+ found {len(logs)} log entries')
 
 for log in logs:
-    logfn = f'log_{log.id}.ulg'
+    logfn = path.join(args.output_dir, f'log_{log.id}.ulg')
+    logdesc = f'{log.id} ({log.size/1024./1024:.2f} MiB)'
     if path.exists(logfn) and not args.update:
         info(f'- log {log.id} already downloaded, skipping')
         continue
@@ -69,17 +49,26 @@ for log in logs:
     ofs = 0
     master.mav.log_request_data_send(master.target_system, master.target_component,
                                      log.id, ofs, log.size - ofs)
-    with open(logfn, 'wb') as f:
-        while ofs < log.size:
-            info(f'\033[2K  downloading log {log.id} ({log.size/1024./1024:.2f} MiB) [{ofs*100//log.size:d}%]', end='\r', flush=True)
-            m = master.recv_match(blocking=True, type='LOG_DATA', timeout=5)
-            if m is None:
-                master.mav.log_request_data_send(master.target_system, master.target_component,
-                                                 log.id, ofs, log.size - ofs)
-                continue
-            assert m.id == log.id
-            assert m.ofs == ofs
-            ofs = m.ofs + m.count
-            f.write(bytes(m.data[:m.count]))
-        info(f'\033[2K+ downloaded log {log.id} ({log.size/1024./1024:.2f} MiB)')
-    #master.mav.log_request_end_send(master.target_system, master.target_component)
+    try:
+        with open(logfn, 'wb') as f:
+            while ofs < log.size:
+                info(f'\033[2K  downloading log {logdesc} [{ofs*100//log.size:d}%]', end='\r', flush=True)
+                m = master.recv_match(blocking=True, type='LOG_DATA', timeout=5)
+                if m is None:
+                    master.mav.log_request_data_send(master.target_system, master.target_component,
+                                                     log.id, ofs, log.size - ofs)
+                    continue
+                if m.id != log.id:
+                    continue
+                assert m.ofs == ofs
+                ofs = m.ofs + m.count
+                f.write(bytes(m.data[:m.count]))
+            info(f'\033[2K+ downloaded log {logdesc}')
+    except KeyboardInterrupt:
+        info(f'\r\033[2K- cancelled download of log {logdesc}')
+        unlink(logfn)
+        master.mav.log_request_end_send(master.target_system, master.target_component)
+        if input('Quit? [yN] ') == 'y':
+            break
+        else:
+            info('\033[A\033[M', end='', flush=True)
